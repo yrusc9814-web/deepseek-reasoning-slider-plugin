@@ -1,32 +1,74 @@
 /**
  * Stylesheet for the reasoning-effort slider and the composer model seat.
  *
- * The slider visualizes whatever effort levels the current model exposes, so
- * the "peak intensity" effects key off the `[data-top]` existence flag the
- * component stamps on the highest level rather than any hardcoded effort id.
+ * The slider visualizes whatever effort levels the current model exposes.
+ * Warm amber/orange is the default; `[data-top]` and `--re-purple` only flip
+ * the last advertised level to magenta-purple. Small inset ticks mark each
+ * snap and disappear on the top (purple) stop.
  *
  * @module dsh-reasoning-effort/client/styles
  */
-import chibiRunnerSprite from '../../assets/chibi-runner-strip.png'
-
 export const CSS = `
 .re-effort {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   width: 100%;
   min-width: 0;
-  height: 32px;
+  gap: 8px;
   color: var(--dsw-alias-label-secondary);
   user-select: none;
   box-sizing: border-box;
 }
+.re-effort-caption {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  color: var(--dsw-alias-label-primary, #15171b);
+  font-size: 13px;
+  line-height: 1.2;
+}
+.re-effort-caption-label {
+  flex: none;
+  color: inherit;
+  font-weight: 500;
+}
+.re-effort-caption-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-primary, #15171b);
+  font-weight: 600;
+}
+.re-effort-caption-value.is-top {
+  color: #8a2be8;
+}
+body[data-ds-dark-theme] .re-effort-caption {
+  color: var(--dsw-alias-label-primary, #f2f4f8);
+}
+body[data-ds-dark-theme] .re-effort-caption-value {
+  color: var(--dsw-alias-label-primary, #f2f4f8);
+}
+body[data-ds-dark-theme] .re-effort-caption-value.is-top {
+  color: #c85cff;
+}
 .re-effort-slider {
   --re-progress: 50%;
+  --re-inset: 12px;
+  --re-track-0: #4a2a08;
+  --re-track-1: #e8b03a;
+  --re-track-2: #f6c85a;
+  --re-glow: #ffc14d;
+  --re-warm: 0;
+  --re-purple: 0;
+  --re-floor: 0;
   position: relative;
   width: 100%;
-  height: 30px;
+  height: 22px;
   flex: 1 1 auto;
-  border-radius: 999px;
+  border-radius: 7px;
   isolation: isolate;
   transition: filter 180ms ease;
 }
@@ -35,20 +77,43 @@ export const CSS = `
   inset: 0;
   overflow: hidden;
   border-radius: inherit;
-  background: linear-gradient(100deg, #03040a 0%, #071126 22%, #101d4c 45%, #302262 70%, #5d35a0 100%);
+  background: linear-gradient(100deg, var(--re-track-0) 0%, var(--re-track-1) 58%, var(--re-track-2) 100%);
   box-shadow:
-    inset 0 1px 0 rgba(189, 199, 255, .15),
-    inset 0 -1px 0 rgba(0, 0, 0, .55),
-    0 3px 10px rgba(12, 17, 55, .34);
+    inset 0 1px 0 rgba(255, 232, 190, .18),
+    inset 0 -1px 0 rgba(0, 0, 0, .5),
+    0 3px 10px rgba(42, 18, 4, .34);
 }
 .re-effort-track::after {
   content: "";
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 18% 45%, rgba(82, 130, 255, .12), transparent 24%),
-    linear-gradient(90deg, rgba(0, 0, 0, .28), transparent 42%, rgba(168, 113, 255, .12));
+    radial-gradient(circle at 18% 45%, rgba(255, 236, 190, .14), transparent 24%),
+    linear-gradient(90deg, rgba(0, 0, 0, .28), transparent 42%, color-mix(in srgb, var(--re-glow) 18%, transparent));
   pointer-events: none;
+}
+.re-effort-ticks {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  pointer-events: none;
+}
+.re-effort-tick {
+  position: absolute;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .18);
+  transform: translate(-50%, -50%);
+}
+.re-effort-tick.is-current {
+  width: 6px;
+  height: 6px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .22), 0 0 6px rgba(255,255,255,.7);
 }
 .re-effort-fx {
   position: absolute;
@@ -77,7 +142,7 @@ export const CSS = `
   width: 78px;
   height: 46px;
   border-radius: 50%;
-  background: radial-gradient(ellipse at 100% 50%, rgba(255,255,255,.96) 0 4%, rgba(188,189,255,.8) 11%, rgba(106,87,255,.5) 28%, rgba(105,31,255,.2) 49%, transparent 74%);
+  background: radial-gradient(ellipse at 100% 50%, rgba(255,255,255,.96) 0 4%, color-mix(in srgb, var(--re-glow) 82%, #fff) 11%, color-mix(in srgb, var(--re-glow) 50%, transparent) 28%, color-mix(in srgb, var(--re-glow) 20%, transparent) 49%, transparent 74%);
   filter: blur(2px) saturate(1.25);
   mix-blend-mode: screen;
   transform: translate(-100%, -50%);
@@ -95,59 +160,32 @@ export const CSS = `
 .re-effort-flare::before {
   width: 52px;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(100,160,255,.42), #f1ecff, rgba(193,82,255,.65), transparent);
-  box-shadow: 0 0 7px #9b7cff, 0 0 13px rgba(72,132,255,.64);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--re-glow) 42%, transparent), #fff6e8, color-mix(in srgb, var(--re-glow) 70%, transparent), transparent);
+  box-shadow: 0 0 7px var(--re-glow), 0 0 13px color-mix(in srgb, var(--re-glow) 64%, transparent);
 }
 .re-effort-flare::after {
   width: 1px;
   height: 20px;
-  background: linear-gradient(180deg, transparent, rgba(196,190,255,.84), transparent);
-  box-shadow: 0 0 7px #9c7cff;
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--re-glow) 84%, #fff), transparent);
+  box-shadow: 0 0 7px var(--re-glow);
 }
 .re-effort-knob {
   position: absolute;
   z-index: 4;
-  top: 50%;
-  left: clamp(14px, var(--re-progress), calc(100% - 14px));
-  width: 28px;
-  height: 28px;
-  border: 1px solid rgba(255,255,255,.94);
-  border-radius: 50%;
+  top: 0;
+  bottom: 0;
+  left: var(--re-progress);
+  width: 18px;
+  height: auto;
+  border: 0;
+  border-radius: 4px;
   background: #fff;
   box-shadow:
-    0 0 0 2px rgba(92,105,255,.12),
-    0 0 14px rgba(121,82,255,.48),
-    0 2px 7px rgba(0,0,0,.3);
-  transform: translate(-50%, -50%);
+    0 0 0 1px rgba(0,0,0,.08),
+    0 1px 3px rgba(0,0,0,.2);
+  transform: translateX(-50%);
   transition: left 190ms cubic-bezier(.22,1,.36,1), transform 160ms ease, box-shadow 180ms ease;
   pointer-events: none;
-}
-.re-effort.is-chibi {
-  height: 56px;
-}
-.re-effort.is-chibi .re-effort-knob {
-  left: clamp(10px, var(--re-progress), calc(100% - 10px));
-  width: 40px;
-  height: 55px;
-  border: 0;
-  border-radius: 8px;
-  background-color: transparent;
-  background-image: url("${chibiRunnerSprite}");
-  background-repeat: no-repeat;
-  background-position: 0 0;
-  background-size: 800% 100%;
-  box-shadow: none !important;
-  filter:
-    drop-shadow(0 1px 1px rgba(0, 0, 0, .28))
-    drop-shadow(0 0 5px rgba(92, 105, 255, .34));
-  animation: re-chibi-run 720ms step-end infinite;
-  transform-origin: 50% 68%;
-}
-.re-effort.is-chibi.is-dragging .re-effort-knob {
-  animation-duration: 420ms;
-  filter:
-    drop-shadow(0 2px 1px rgba(0, 0, 0, .28))
-    drop-shadow(0 0 8px rgba(87, 137, 255, .68));
 }
 .re-effort-input {
   position: absolute;
@@ -173,12 +211,12 @@ export const CSS = `
   transition: none;
 }
 .re-effort.is-dragging .re-effort-knob {
-  transform: translate(-50%, -50%) scale(1.07);
+  transform: translateX(-50%) scale(1.04);
   transition: none;
   box-shadow:
-    0 0 0 3px rgba(113,115,255,.25),
-    0 0 20px rgba(74,145,255,.86),
-    0 0 31px rgba(171,53,255,.66),
+    0 0 0 3px color-mix(in srgb, var(--re-glow) 28%, transparent),
+    0 0 20px color-mix(in srgb, var(--re-glow) 78%, transparent),
+    0 0 31px color-mix(in srgb, var(--re-glow) 52%, transparent),
     0 3px 8px rgba(0,0,0,.32);
 }
 .re-effort-slider[data-top] .re-effort-track {
@@ -186,10 +224,32 @@ export const CSS = `
 }
 .re-effort-slider[data-top] .re-effort-knob {
   box-shadow:
-    0 0 0 3px rgba(119,99,255,.18),
-    0 0 22px rgba(135,78,255,.76),
-    0 0 34px rgba(53,121,255,.34),
-    0 3px 8px rgba(0,0,0,.3);
+    0 0 0 1px rgba(255,255,255,.55),
+    0 0 14px color-mix(in srgb, var(--re-glow) 70%, transparent),
+    0 1px 3px rgba(0,0,0,.22);
+}
+.re-effort-slider[data-top] .re-effort-ticks {
+  display: none;
+}
+.re-effort-slider[data-floor] .re-effort-track {
+  background: #ececee;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.9),
+    inset 0 0 0 1px rgba(160,164,176,.18);
+  animation: none;
+}
+.re-effort-slider[data-floor] .re-effort-track::after,
+.re-effort-slider[data-floor] .re-effort-track::before,
+.re-effort-slider[data-floor] .re-effort-flare,
+.re-effort-slider[data-floor] .re-effort-canvas {
+  opacity: 0;
+}
+.re-effort-slider[data-floor] .re-effort-tick {
+  background: #8b8f99;
+  box-shadow: none;
+}
+.re-effort-slider[data-floor] .re-effort-tick.is-current {
+  background: #6d717a;
 }
 .re-effort.is-error .re-effort-slider {
   outline: 1px solid var(--dsw-alias-state-error-secondary);
@@ -404,11 +464,11 @@ body:not([data-ds-dark-theme]) .re-effort-slider {
   filter: none;
 }
 body:not([data-ds-dark-theme]) .re-effort-track {
-  background: var(--dsw-static-blue-75, #e5f0ff);
+  background: linear-gradient(90deg, #fff6e8 0%, color-mix(in srgb, var(--re-track-1) 55%, #fff) 42%, var(--re-track-2) 100%);
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,.9),
-    inset 0 0 0 1px rgba(80,133,194,.14),
-    0 3px 10px rgba(48,101,165,.13);
+    inset 0 0 0 1px rgba(176,120,48,.16),
+    0 3px 10px rgba(140,78,18,.12);
 }
 body:not([data-ds-dark-theme]) .re-effort-track::before {
   content: "";
@@ -417,41 +477,57 @@ body:not([data-ds-dark-theme]) .re-effort-track::before {
   inset: 0 auto 0 0;
   width: var(--re-progress);
   border-radius: inherit;
-  background: linear-gradient(90deg, #fff 0%, #e2f0ff 20%, #a8d0fb 57%, #438fdf 100%);
+  background: linear-gradient(90deg, #fff8ee 0%, color-mix(in srgb, var(--re-track-1) 70%, #fff) 42%, var(--re-track-2) 100%);
   transition: width 190ms cubic-bezier(.22,1,.36,1);
 }
 body:not([data-ds-dark-theme]) .re-effort-slider[data-top] .re-effort-track::before {
-  background: linear-gradient(90deg, #fff 0%, #d7eaff 18%, #75afea 54%, #0751ad 100%);
+  background: linear-gradient(90deg, #f7efff 0%, #c9a6ff 42%, #9a2cf0 100%);
 }
 body:not([data-ds-dark-theme]) .re-effort.is-dragging .re-effort-track::before {
   transition: none;
 }
 body:not([data-ds-dark-theme]) .re-effort-track::after {
   z-index: 1;
-  background: linear-gradient(90deg, rgba(255,255,255,.48), transparent 34%, rgba(23,101,201,.07));
+  background: linear-gradient(90deg, rgba(255,255,255,.48), transparent 34%, color-mix(in srgb, var(--re-glow) 10%, transparent));
+}
+body:not([data-ds-dark-theme]) .re-effort-tick {
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(80, 64, 32, .28);
+}
+body:not([data-ds-dark-theme]) .re-effort-tick.is-current {
+  background: #fff;
+}
+body:not([data-ds-dark-theme]) .re-effort-slider[data-floor] .re-effort-track {
+  background: #ececee;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.95),
+    inset 0 0 0 1px rgba(160,164,176,.2);
+}
+body:not([data-ds-dark-theme]) .re-effort-slider[data-floor] .re-effort-tick {
+  background: #8b8f99;
+  box-shadow: none;
 }
 body:not([data-ds-dark-theme]) .re-effort-canvas {
   opacity: .78;
   mix-blend-mode: multiply;
 }
 body:not([data-ds-dark-theme]) .re-effort-flare {
-  background: radial-gradient(ellipse at 100% 50%, rgba(255,255,255,.98) 0 5%, rgba(204,231,255,.88) 13%, rgba(91,162,241,.48) 31%, rgba(37,111,207,.16) 53%, transparent 75%);
+  background: radial-gradient(ellipse at 100% 50%, rgba(255,255,255,.98) 0 5%, color-mix(in srgb, var(--re-glow) 72%, #fff) 13%, color-mix(in srgb, var(--re-glow) 42%, transparent) 31%, color-mix(in srgb, var(--re-glow) 16%, transparent) 53%, transparent 75%);
   filter: blur(2px) saturate(1.12);
 }
 body:not([data-ds-dark-theme]) .re-effort-flare::before {
-  background: linear-gradient(90deg, transparent, rgba(116,177,244,.34), #fff, rgba(66,139,225,.58), transparent);
-  box-shadow: 0 0 7px rgba(58,133,222,.5), 0 0 13px rgba(104,176,255,.38);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--re-glow) 34%, transparent), #fff, color-mix(in srgb, var(--re-glow) 58%, transparent), transparent);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--re-glow) 50%, transparent), 0 0 13px color-mix(in srgb, var(--re-glow) 38%, transparent);
 }
 body:not([data-ds-dark-theme]) .re-effort-flare::after {
   background: linear-gradient(180deg, transparent, rgba(255,255,255,.94), transparent);
-  box-shadow: 0 0 7px rgba(64,137,224,.44);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--re-glow) 44%, transparent);
 }
 body:not([data-ds-dark-theme]) .re-effort-knob {
-  border-color: rgba(126,160,197,.32);
+  border-color: transparent;
   box-shadow:
-    0 0 0 2px rgba(58,124,207,.09),
-    0 0 13px rgba(48,118,207,.3),
-    0 3px 8px rgba(39,77,119,.18);
+    0 0 0 1px rgba(0,0,0,.06),
+    0 1px 3px rgba(70, 40, 8, .18);
 }
 body:not([data-ds-dark-theme]) .re-effort-slider[data-top] .re-effort-track {
   animation-name: re-effort-light-breathe;
@@ -459,26 +535,17 @@ body:not([data-ds-dark-theme]) .re-effort-slider[data-top] .re-effort-track {
 body:not([data-ds-dark-theme]) .re-effort-slider[data-top] .re-effort-knob,
 body:not([data-ds-dark-theme]) .re-effort.is-dragging .re-effort-knob {
   box-shadow:
-    0 0 0 3px rgba(36,105,192,.15),
-    0 0 20px rgba(25,100,201,.45),
-    0 3px 8px rgba(39,77,119,.18);
+    0 0 0 1px rgba(255,255,255,.7),
+    0 0 12px color-mix(in srgb, var(--re-glow) 36%, transparent),
+    0 1px 3px rgba(70, 40, 8, .18);
 }
 @keyframes re-effort-dark-breathe {
-  0%, 100% { box-shadow: inset 0 1px 0 rgba(196,204,255,.16), 0 3px 10px rgba(18,25,72,.4); }
-  50% { box-shadow: inset 0 1px 0 rgba(220,214,255,.24), 0 0 21px rgba(111,66,255,.5); }
+  0%, 100% { box-shadow: inset 0 1px 0 rgba(255, 228, 190, .16), 0 3px 10px rgba(42, 16, 4, .4); }
+  50% { box-shadow: inset 0 1px 0 rgba(255, 214, 170, .24), 0 0 21px color-mix(in srgb, var(--re-glow) 50%, transparent); }
 }
 @keyframes re-effort-light-breathe {
-  0%, 100% { box-shadow: inset 0 1px 0 rgba(255,255,255,.9), inset 0 0 0 1px rgba(67,124,193,.16), 0 3px 10px rgba(48,101,165,.13); }
-  50% { box-shadow: inset 0 1px 0 rgba(255,255,255,.96), inset 0 0 0 1px rgba(31,102,190,.22), 0 0 19px rgba(31,105,201,.24); }
-}
-@keyframes re-chibi-run {
-  0% { background-position: 14.285714% 0; }
-  14.285714% { background-position: 28.571429% 0; }
-  28.571429% { background-position: 42.857143% 0; }
-  42.857143% { background-position: 57.142857% 0; }
-  57.142857% { background-position: 71.428571% 0; }
-  71.428571% { background-position: 85.714286% 0; }
-  85.714286%, 100% { background-position: 100% 0; }
+  0%, 100% { box-shadow: inset 0 1px 0 rgba(255,255,255,.9), inset 0 0 0 1px rgba(176,120,48,.16), 0 3px 10px rgba(140,78,18,.12); }
+  50% { box-shadow: inset 0 1px 0 rgba(255,255,255,.96), inset 0 0 0 1px color-mix(in srgb, var(--re-glow) 28%, transparent), 0 0 19px color-mix(in srgb, var(--re-glow) 24%, transparent); }
 }
 .re-adapt {
   padding: 10px 14px 12px;
@@ -604,6 +671,5 @@ body[data-ds-dark-theme] .re-adapt-panel {
   .re-effort-flare,
   body:not([data-ds-dark-theme]) .re-effort-track::before { transition: none; }
   .re-model-menu { animation: none; }
-  .re-effort.is-chibi .re-effort-knob { animation: none; }
 }
 `

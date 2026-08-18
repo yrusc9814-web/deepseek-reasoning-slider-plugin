@@ -136,7 +136,6 @@ const SLOT = 'conversation.input.model'
 const SETTINGS_SLOT = 'settings.general.item'
 const ENABLED_STORAGE_KEY = 'dsh-reasoning-effort.enabled'
 const LEGACY_ENABLED_STORAGE_KEY = '@dsh-external/dsh-reasoning-effort.enabled'
-const CHIBI_THUMB_STORAGE_KEY = 'dsh-reasoning-effort.chibi-thumb'
 export const inject = ['slots', 'modelDirectories', 'connection']
 
 function readEnabledPreference(): boolean {
@@ -169,38 +168,6 @@ const enabledStore = {
       }
     }
     enabledListeners.forEach((listener) => listener())
-  },
-}
-
-function readChibiThumbPreference(): boolean {
-  try {
-    // Default on: only an explicit "false" disables the chibi thumb.
-    return window.localStorage.getItem(CHIBI_THUMB_STORAGE_KEY) !== 'false'
-  } catch {
-    return true
-  }
-}
-
-let chibiThumbPreference = readChibiThumbPreference()
-const chibiThumbListeners = new Set<() => void>()
-
-const chibiThumbStore = {
-  getSnapshot: () => chibiThumbPreference,
-  subscribe: (listener: () => void) => {
-    chibiThumbListeners.add(listener)
-    return () => chibiThumbListeners.delete(listener)
-  },
-  set: (enabled: boolean, persist = true) => {
-    if (chibiThumbPreference === enabled) return
-    chibiThumbPreference = enabled
-    if (persist) {
-      try {
-        window.localStorage.setItem(CHIBI_THUMB_STORAGE_KEY, String(enabled))
-      } catch {
-        // The current page still follows the choice when storage is unavailable.
-      }
-    }
-    chibiThumbListeners.forEach((listener) => listener())
   },
 }
 
@@ -244,6 +211,75 @@ function effectiveEffortIndex(levels: readonly EffortLevel[], state: ModelDirect
 interface RadiationState {
   progress: number
   dragging: boolean
+  warm: number
+  purple: number
+  floor: number
+}
+
+interface SliderPalette {
+  c0: string
+  c1: string
+  c2: string
+  glow: string
+  warm: number
+  purple: number
+  floor: number
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value))
+}
+
+function mixChannel(from: number, to: number, amount: number): number {
+  return Math.round(from + (to - from) * amount)
+}
+
+function parseHex(color: string): [number, number, number] {
+  const hex = color.replace('#', '')
+  return [
+    Number.parseInt(hex.slice(0, 2), 16),
+    Number.parseInt(hex.slice(2, 4), 16),
+    Number.parseInt(hex.slice(4, 6), 16),
+  ]
+}
+
+function mixHex(from: string, to: string, amount: number): string {
+  const a = parseHex(from)
+  const b = parseHex(to)
+  return `#${[0, 1, 2].map((index) => mixChannel(a[index]!, b[index]!, amount).toString(16).padStart(2, '0')).join('')}`
+}
+
+function mixStops(from: Omit<SliderPalette, 'warm' | 'purple' | 'floor'>, to: Omit<SliderPalette, 'warm' | 'purple' | 'floor'>, amount: number): Omit<SliderPalette, 'warm' | 'purple' | 'floor'> {
+  return {
+    c0: mixHex(from.c0, to.c0, amount),
+    c1: mixHex(from.c1, to.c1, amount),
+    c2: mixHex(from.c2, to.c2, amount),
+    glow: mixHex(from.glow, to.glow, amount),
+  }
+}
+
+function effortCaption(level: EffortLevel | undefined): string {
+  const raw = level !== undefined && /^[\x20-\x7E]+$/.test(level.name) ? level.name : (level?.id ?? '')
+  if (/^max$/i.test(raw)) return 'MAX'
+  if (raw.length === 0) return ''
+  return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
+}
+
+/** Codex-style palette: first stop is grey, then amber through orange, then magenta-purple. */
+function sliderPalette(preview: number, count: number, dragging: boolean): SliderPalette {
+  const last = Math.max(1, count - 1)
+  const t = count < 2 ? 0 : clamp01(preview / last)
+  const snappedTop = !dragging && preview >= last - 0.001
+  const snappedFloor = !dragging && preview <= 0.02
+  const floor = snappedFloor ? 1 : dragging && t < 0.14 ? 1 - t / 0.14 : 0
+  const warm = count <= 2 ? 1 : clamp01(Math.min(preview, last - 1) / Math.max(1, last - 1))
+  const purple = snappedTop ? 1 : t < 0.82 ? 0 : clamp01((t - 0.82) / 0.18)
+  const grey = { c0: '#e4e4e8', c1: '#ececee', c2: '#f3f3f5', glow: '#d4d4d8' }
+  const warmLow = { c0: '#4a2a08', c1: '#e8b03a', c2: '#f6c85a', glow: '#ffc14d' }
+  const warmHigh = { c0: '#3a1604', c1: '#e07010', c2: '#ff8a12', glow: '#ff9a2a' }
+  const purpleTop = { c0: '#1c0624', c1: '#8a14e8', c2: '#d24cff', glow: '#c85cff' }
+  const mixed = mixStops(mixStops(mixStops(warmLow, warmHigh, warm), purpleTop, purple), grey, floor)
+  return { ...mixed, warm, purple, floor }
 }
 
 function drawRadiation(
@@ -253,18 +289,49 @@ function drawRadiation(
   time: number,
   state: RadiationState,
 ): void {
-  const origin = state.progress * width
+  const inset = Math.min(11, width * 0.08)
+  const origin = inset + state.progress * Math.max(1, width - inset * 2)
   const isDark = document.body.hasAttribute('data-ds-dark-theme')
-  const cell = 4
-  const speed = state.dragging ? 2.8 : 1
+  const dense = state.purple > 0.45
+  const cell = dense ? 2 : 3
+  const speed = (state.dragging ? 2.8 : 1) * (dense ? 1.35 : 1)
+  const warm = state.warm
+  const purple = state.purple
 
   context.clearRect(0, 0, width, height)
-  if (origin <= 0) return
+  if (origin <= 0 || state.floor > 0.85) return
 
   context.save()
   context.beginPath()
   context.rect(0, 0, origin, height)
   context.clip()
+
+  const warmColumn = isDark
+    ? { r: [210, 255], g: [150, 96], b: [28, 8] }
+    : { r: [214, 232], g: [142, 88], b: [36, 12] }
+  const purpleColumn = isDark
+    ? { r: [168, 226], g: [48, 72], b: [214, 255] }
+    : { r: [156, 188], g: [64, 86], b: [206, 236] }
+  const warmPixel = isDark
+    ? { r: [230, 255], g: [164, 108], b: [36, 10] }
+    : { r: [220, 236], g: [150, 96], b: [40, 16] }
+  const purplePixel = isDark
+    ? { r: [186, 236], g: [62, 92], b: [228, 255] }
+    : { r: [164, 198], g: [72, 98], b: [214, 240] }
+
+  const channel = (
+    warmRange: { r: number[]; g: number[]; b: number[] },
+    purpleRange: { r: number[]; g: number[]; b: number[] },
+    heat: number,
+  ): [number, number, number] => {
+    const wr = mixChannel(warmRange.r[0]!, warmRange.r[1]!, heat)
+    const wg = mixChannel(warmRange.g[0]!, mixChannel(warmRange.g[0]!, warmRange.g[1]!, warm), heat)
+    const wb = mixChannel(warmRange.b[0]!, warmRange.b[1]!, heat)
+    const pr = mixChannel(purpleRange.r[0]!, purpleRange.r[1]!, heat)
+    const pg = mixChannel(purpleRange.g[0]!, purpleRange.g[1]!, heat)
+    const pb = mixChannel(purpleRange.b[0]!, purpleRange.b[1]!, heat)
+    return [mixChannel(wr, pr, purple), mixChannel(wg, pg, purple), mixChannel(wb, pb, purple)]
+  }
 
   for (let x = 0; x < origin; x += cell) {
     const delta = x + cell * 0.5 - origin
@@ -272,29 +339,27 @@ function drawRadiation(
     const phaseA = distance / 10 - time * 0.0074 * speed
     const phaseB = distance / 23 - time * 0.0041 * speed + 1.7
     const phaseC = distance / 40 - time * 0.0022 * speed + 3.4
+    const phaseD = distance / 7 - time * 0.011 * speed + 0.6
+    const phaseE = distance / 15 - time * 0.0062 * speed + 2.5
     const sinA = Math.max(0, Math.sin(phaseA))
     const sinB = Math.max(0, Math.sin(phaseB))
     const sinC = Math.max(0, Math.sin(phaseC))
+    const sinD = Math.max(0, Math.sin(phaseD))
+    const sinE = Math.max(0, Math.sin(phaseE))
     const waveA = Math.pow(sinA, 2.6)
     const waveB = Math.pow(sinB, 3.2)
     const waveC = Math.pow(sinC, 4)
-    const crest = Math.pow(sinA, 15) + Math.pow(sinB, 18) * 0.78
-    const wave = Math.min(1, waveA * 0.76 + waveB * 0.58 + waveC * 0.32)
+    const waveD = Math.pow(sinD, 2.2)
+    const waveE = Math.pow(sinE, 3.4)
+    const crest = Math.pow(sinA, 15) + Math.pow(sinB, 18) * 0.78 + (dense ? Math.pow(sinD, 12) * 0.55 : 0)
+    const wave = Math.min(1, waveA * 0.76 + waveB * 0.58 + waveC * 0.32 + (dense ? waveD * 0.55 + waveE * 0.4 : 0))
     const trail = 0.38 + 0.62 * Math.exp(-distance / Math.max(55, width * 0.72))
     const pillar = Math.pow(Math.max(0, Math.sin(x / 20 + time * 0.0016)), 3) * 0.27
     const columnEnergy = trail * (wave * 1.04 + pillar + crest * 0.32)
 
     if (columnEnergy > 0.012) {
       const nearness = Math.max(0, 1 - distance / Math.max(1, width * 0.78))
-      const red = isDark
-        ? Math.round(42 + 124 * nearness + 75 * wave)
-        : Math.round(28 + 58 * nearness + 15 * wave)
-      const green = isDark
-        ? Math.round(56 + 58 * nearness + 44 * crest)
-        : Math.round(88 + 72 * nearness + 30 * crest)
-      const blue = isDark
-        ? Math.round(175 + 72 * nearness + 8 * wave)
-        : Math.round(182 + 62 * nearness)
+      const [red, green, blue] = channel(warmColumn, purpleColumn, Math.min(1, nearness * 0.72 + wave * 0.28))
       const alpha = isDark
         ? Math.min(0.88, columnEnergy * 0.72)
         : Math.min(0.62, columnEnergy * 0.54)
@@ -312,40 +377,60 @@ function drawRadiation(
       if (alpha < 0.035) continue
 
       const hot = Math.max(0, 1 - radial / 2.4)
-      const red = isDark
-        ? Math.round(54 + 148 * hot + 42 * wave + 35 * crest)
-        : Math.round(25 + 72 * hot + 12 * wave)
-      const green = isDark
-        ? Math.round(68 + 78 * hot + 46 * crest)
-        : Math.round(98 + 72 * hot + 24 * crest)
-      const blue = isDark
-        ? Math.round(186 + 64 * hot)
-        : Math.round(194 + 56 * hot)
+      const [red, green, blue] = channel(warmPixel, purplePixel, Math.min(1, hot * 0.82 + crest * 0.18))
       context.fillStyle = `rgba(${red}, ${green}, ${blue}, ${isDark ? alpha : alpha * 0.72})`
       context.fillRect(x, y, cell - 1, cell - 1)
     }
   }
 
-  for (let i = 0; i < 14; i += 1) {
+  const streakWarm = isDark ? [255, 176, 64] : [214, 122, 18]
+  const streakPurple = isDark ? [214, 132, 255] : [148, 64, 220]
+  const streak = [
+    mixChannel(streakWarm[0]!, streakPurple[0]!, purple),
+    mixChannel(streakWarm[1]!, streakPurple[1]!, purple),
+    mixChannel(streakWarm[2]!, streakPurple[2]!, purple),
+  ]
+
+  if (dense) {
+    for (let waveIndex = 0; waveIndex < 6; waveIndex += 1) {
+      const travel = (time * 0.09 * speed + waveIndex * 26) % Math.max(48, origin + 36)
+      const waveX = origin - travel
+      const pulse = 0.07 + 0.11 * Math.max(0, Math.sin(time * 0.004 + waveIndex))
+      const band = context.createLinearGradient(waveX - 22, 0, waveX + 10, 0)
+      band.addColorStop(0, `rgba(${streak[0]}, ${streak[1]}, ${streak[2]}, 0)`)
+      band.addColorStop(0.55, `rgba(${streak[0]}, ${streak[1]}, ${streak[2]}, ${pulse})`)
+      band.addColorStop(1, `rgba(255,255,255,${pulse * 0.55})`)
+      context.fillStyle = band
+      context.fillRect(waveX - 22, 0, 32, height)
+    }
+  }
+
+  const particleCount = dense ? 28 : 14
+  for (let i = 0; i < particleCount; i += 1) {
     const travel = (time * (state.dragging ? 0.16 : 0.065) * (0.78 + (i % 5) * 0.09) + i * 23) % Math.max(30, origin + 64)
     const particleX = origin - travel
     if (particleX < -24 || particleX > width + 16) continue
-    const particleY = 3 + ((i * 13 + Math.sin(time * 0.003 + i) * 5) % Math.max(7, height - 6))
-    const length = 4 + (i % 4) * 4 + (state.dragging ? 6 : 0)
+    const particleY = 2 + ((i * 11 + Math.sin(time * 0.003 + i) * 4) % Math.max(5, height - 4))
+    const length = 4 + (i % 4) * 4 + (state.dragging ? 6 : 0) + (dense ? 2 : 0)
     const alpha = 0.28 + (i % 5) * 0.1
-    const streak = context.createLinearGradient(particleX, 0, particleX + length, 0)
-    streak.addColorStop(0, isDark ? 'rgba(72,118,255,0)' : 'rgba(24,94,184,0)')
-    streak.addColorStop(0.68, isDark ? `rgba(112,135,255,${alpha})` : `rgba(36,108,202,${alpha * 0.72})`)
-    streak.addColorStop(1, isDark ? `rgba(236,222,255,${Math.min(1, alpha + 0.26)})` : `rgba(103,175,248,${Math.min(0.82, alpha + 0.18)})`)
-    context.fillStyle = streak
+    const fade = context.createLinearGradient(particleX, 0, particleX + length, 0)
+    fade.addColorStop(0, `rgba(${streak[0]}, ${streak[1]}, ${streak[2]}, 0)`)
+    fade.addColorStop(0.68, `rgba(${streak[0]}, ${streak[1]}, ${streak[2]}, ${isDark ? alpha : alpha * 0.72})`)
+    fade.addColorStop(1, isDark ? `rgba(255,244,228,${Math.min(1, alpha + 0.26)})` : `rgba(255,236,210,${Math.min(0.82, alpha + 0.18)})`)
+    context.fillStyle = fade
     context.fillRect(particleX, particleY, length, i % 3 === 0 ? 2 : 1)
   }
 
   const glow = context.createRadialGradient(origin, height / 2, 0, origin, height / 2, 24)
+  const mid = [
+    mixChannel(255, 214, purple),
+    mixChannel(176, 96, purple),
+    mixChannel(64, 255, purple),
+  ]
   glow.addColorStop(0, isDark ? 'rgba(255,255,255,.82)' : 'rgba(255,255,255,.86)')
-  glow.addColorStop(0.14, isDark ? 'rgba(183,190,255,.54)' : 'rgba(162,210,255,.48)')
-  glow.addColorStop(0.44, isDark ? 'rgba(103,74,255,.28)' : 'rgba(37,112,207,.22)')
-  glow.addColorStop(1, isDark ? 'rgba(86,31,210,0)' : 'rgba(25,91,181,0)')
+  glow.addColorStop(0.14, isDark ? `rgba(${mid[0]}, ${mid[1]}, ${mid[2]}, .54)` : `rgba(${mid[0]}, ${mid[1]}, ${mid[2]}, .48)`)
+  glow.addColorStop(0.44, isDark ? `rgba(${mid[0]}, ${Math.max(40, mid[1] - 40)}, ${mid[2]}, .28)` : `rgba(${mid[0]}, ${Math.max(40, mid[1] - 40)}, ${mid[2]}, .22)`)
+  glow.addColorStop(1, 'rgba(0,0,0,0)')
   context.fillStyle = glow
   context.fillRect(origin - 26, 0, 52, height)
   context.restore()
@@ -362,7 +447,6 @@ function EffortSlider({ directory }: { directory: ModelDirectory }) {
   const [committing, setCommitting] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
-  const chibiThumb = useSyncExternalStore(chibiThumbStore.subscribe, chibiThumbStore.getSnapshot)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const committedRef = useRef('')
@@ -374,7 +458,7 @@ function EffortSlider({ directory }: { directory: ModelDirectory }) {
   const globalPointerMoveRef = useRef<((event: PointerEvent) => void) | null>(null)
   const globalPointerEndRef = useRef<((event: PointerEvent) => void) | null>(null)
   const globalPointerCancelRef = useRef<((event: PointerEvent) => void) | null>(null)
-  const radiationRef = useRef<RadiationState>({ progress: 0.5, dragging: false })
+  const radiationRef = useRef<RadiationState>({ progress: 0.5, dragging: false, warm: 0.5, purple: 0, floor: 1 })
   const redrawRef = useRef<(() => void) | null>(null)
   const available = directoryState.current !== null && levels.length >= 2
   const busy = committing || directoryState.status === 'selecting'
@@ -396,15 +480,15 @@ function EffortSlider({ directory }: { directory: ModelDirectory }) {
   }, [directory])
 
   useEffect(() => {
+    const palette = sliderPalette(preview, levels.length, dragging)
     previewRef.current = preview
     radiationRef.current.progress = levels.length >= 2 ? preview / (levels.length - 1) : 0.5
-    redrawRef.current?.()
-  }, [preview, levels.length])
-
-  useEffect(() => {
+    radiationRef.current.warm = palette.warm
+    radiationRef.current.purple = palette.purple
+    radiationRef.current.floor = palette.floor
     radiationRef.current.dragging = dragging
     redrawRef.current?.()
-  }, [dragging])
+  }, [preview, levels.length, dragging])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -631,22 +715,51 @@ function EffortSlider({ directory }: { directory: ModelDirectory }) {
 
   const count = levels.length
   const effortName = levels[effortIndex(levels, effort)]?.name ?? effort
-  const isTop = effortIndex(levels, effort) === count - 1
-  const progress = preview / (count - 1) * 100
-  const style = { '--re-progress': `${progress}%` } as CSSProperties
-  const title = error === null ? `推理强度 · ${effortName}` : `推理强度设置失败：${error}`
+  const t = count <= 1 ? 0 : preview / (count - 1)
+  const palette = sliderPalette(preview, count, dragging)
+  const isTop = palette.purple >= 0.98 || (!dragging && t >= 0.999)
+  const isFloor = palette.floor >= 0.85
+  const caption = effortCaption(levels[Math.round(preview)] ?? levels[effortIndex(levels, effort)])
+  const style = {
+    '--re-t': String(t),
+    '--re-progress': `calc(var(--re-inset) + (100% - 2 * var(--re-inset)) * ${t})`,
+    '--re-track-0': palette.c0,
+    '--re-track-1': palette.c1,
+    '--re-track-2': palette.c2,
+    '--re-glow': palette.glow,
+    '--re-warm': String(palette.warm),
+    '--re-purple': String(palette.purple),
+    '--re-floor': String(palette.floor),
+  } as CSSProperties
+  const title = error === null ? `思考强度 ${caption}` : `推理强度设置失败：${error}`
 
   return (
     <div
-      className={`re-effort${chibiThumb ? ' is-chibi' : ''}${dragging ? ' is-dragging' : ''}${busy ? ' is-busy' : ''}${error === null ? '' : ' is-error'}`}
+      className={`re-effort${dragging ? ' is-dragging' : ''}${busy ? ' is-busy' : ''}${error === null ? '' : ' is-error'}${isFloor ? ' is-floor' : ''}${isTop ? ' is-top' : ''}`}
       title={title}
     >
+      <div className="re-effort-caption" aria-hidden="true">
+        <span className="re-effort-caption-label">思考强度</span>
+        <span className={`re-effort-caption-value${isTop ? ' is-top' : ''}`}>{caption}</span>
+      </div>
       <div
         className="re-effort-slider"
         data-top={isTop ? 'true' : undefined}
+        data-floor={isFloor ? 'true' : undefined}
         style={style}
       >
         <div className="re-effort-track" aria-hidden="true" />
+        {isTop ? null : (
+          <div className="re-effort-ticks" aria-hidden="true">
+            {levels.map((level, index) => (
+              <span
+                key={level.id}
+                className={`re-effort-tick${Math.round(preview) === index ? ' is-current' : ''}`}
+                style={{ left: `calc(var(--re-inset) + (100% - 2 * var(--re-inset)) * ${index / (count - 1)})` }}
+              />
+            ))}
+          </div>
+        )}
         <div className="re-effort-fx" aria-hidden="true">
           <canvas ref={canvasRef} className="re-effort-canvas" />
           <span className="re-effort-flare" />
@@ -980,34 +1093,6 @@ function ReasoningEffortSetting() {
   )
 }
 
-function ChibiThumbSetting() {
-  const sliderEnabled = useSyncExternalStore(enabledStore.subscribe, enabledStore.getSnapshot)
-  const enabled = useSyncExternalStore(chibiThumbStore.subscribe, chibiThumbStore.getSnapshot)
-
-  return (
-    <div className="re-setting-row">
-      <div className="re-setting-copy">
-        <div className="re-setting-title">大肥鱼滑块</div>
-        <div className="re-setting-description">用大肥鱼替换滑块按钮</div>
-      </div>
-      <div className="re-setting-control">
-        <span className="re-setting-state">{enabled ? '启用' : '停用'}</span>
-        <button
-          type="button"
-          role="switch"
-          aria-label="启用大肥鱼滑块"
-          aria-checked={enabled}
-          disabled={!sliderEnabled}
-          className={`re-setting-switch${enabled ? ' is-on' : ''}`}
-          onClick={() => chibiThumbStore.set(!enabled)}
-        >
-          <span className="re-setting-switch-knob" aria-hidden="true" />
-        </button>
-      </div>
-    </div>
-  )
-}
-
 export function apply(ctx: ClientContext) {
   const modelDirectories = ctx.get('modelDirectories') as ModelDirectoryResolver | undefined
   if (modelDirectories === undefined) return
@@ -1027,8 +1112,6 @@ export function apply(ctx: ClientContext) {
     const syncStorage = (event: StorageEvent) => {
       if (event.key === ENABLED_STORAGE_KEY) {
         enabledStore.set(event.newValue !== 'false', false)
-      } else if (event.key === CHIBI_THUMB_STORAGE_KEY) {
-        chibiThumbStore.set(event.newValue === 'true', false)
       }
     }
     window.addEventListener('storage', syncStorage)
@@ -1039,13 +1122,6 @@ export function apply(ctx: ClientContext) {
     ctx.slots.register(
       { name: SETTINGS_SLOT, id: 'reasoning-effort-enabled', order: 15 },
       ReasoningEffortSetting,
-    ),
-  )
-
-  ctx.slots.inject(SETTINGS_SLOT, () =>
-    ctx.slots.register(
-      { name: SETTINGS_SLOT, id: 'reasoning-effort-chibi-thumb', order: 16 },
-      ChibiThumbSetting,
     ),
   )
 

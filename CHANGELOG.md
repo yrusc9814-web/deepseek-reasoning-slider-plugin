@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased] — local Codex slider port
+
+### Changed
+
+- Client track is a short rounded rectangle; the thumb is a white rounded rectangle that fills the track height.
+- First advertised level is grey-white with radiation disabled; intermediate levels stay amber/orange; the last level is magenta-purple.
+- Tick dots are inset and hidden on the last level. Extra pixel density and light waves only run on that last level.
+- Caption above the slider: `思考强度` plus an English level (`Xhigh`, `MAX`, `Medium`, …). Only the English word turns purple on the last level.
+- Removed the chibi / “大肥鱼” thumb and its settings switch. The sprite file remains as a historical asset.
+
+### Added
+
+- `docs/` — architecture, effort mapping, loading, verification, limitations, local port notes.
+
+### Docs
+
+- README rewritten for this checkout (install, enable, directory, honest test status).
+- `.gitignore` expanded for env files, logs, and local scratch.
+
+Host RPC, knowledge base, and session `selectModel` behavior are unchanged from 0.6.2.
+
 ## [0.6.2] - 2026-08-17
 
 ### Fixed

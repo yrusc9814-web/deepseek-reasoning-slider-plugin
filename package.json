@@ -17,11 +17,11 @@
   "author": "HanaAyane",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/HanaAyane/dsh-reasoning-effort.git"
+    "url": "git+https://github.com/yrusc9814-web/deepseek-reasoning-slider-plugin.git"
   },
-  "homepage": "https://github.com/HanaAyane/dsh-reasoning-effort#readme",
+  "homepage": "https://github.com/yrusc9814-web/deepseek-reasoning-slider-plugin#readme",
   "bugs": {
-    "url": "https://github.com/HanaAyane/dsh-reasoning-effort/issues"
+    "url": "https://github.com/yrusc9814-web/deepseek-reasoning-slider-plugin/issues"
   },
   "engines": {
     "node": ">=22.19"
@@ -47,6 +47,7 @@
     "src",
     "assets/chibi-runner-strip.png",
     "design",
+    "docs",
     "cordis.patch.yml",
     "README.md",
     "README.en.md",
