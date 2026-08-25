@@ -61,6 +61,7 @@
     "build:client-types": "tsc -p tsconfig.client.json",
     "watch": "tsc -p tsconfig.json --watch",
     "watch:client": "node scripts/build-client.mjs --watch",
+    "test": "pnpm run build:host && node --test test/*.test.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "prepack": "pnpm run build",
     "check": "pnpm run typecheck && pnpm run build"

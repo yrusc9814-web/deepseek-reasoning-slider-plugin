@@ -118,3 +118,21 @@ export function displayLevels(entry: KnowledgeEntry): string[] {
     .filter(([, wire]) => wire !== null)
     .map(([level]) => level)
 }
+
+/** All declared levels used for capability comparison, including `off: null`. */
+export function comparisonLevels(entry: KnowledgeEntry): string[] {
+  return Object.keys(entry.efforts)
+}
+
+/** Whether a settings declaration preserves every knowledge-base wire mapping. */
+export function sameEffortMap(
+  actual: unknown,
+  expected: Readonly<Record<string, string | null>>,
+): boolean {
+  if (typeof actual !== 'object' || actual === null || Array.isArray(actual)) return false
+  const declared = actual as Record<string, unknown>
+  const actualKeys = Object.keys(declared)
+  const expectedKeys = Object.keys(expected)
+  return actualKeys.length === expectedKeys.length
+    && expectedKeys.every((level) => Object.hasOwn(declared, level) && declared[level] === expected[level])
+}

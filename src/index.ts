@@ -18,7 +18,14 @@ import type { Context } from '@deepseek-ai/cordis'
 // Activate the host-side `ctx.connection` Context augmentation (type-only).
 import type {} from '@deepseek-ai/dsh-client-connection'
 import z from '@deepseek-ai/schemastery'
-import { BUILTIN_ENTRIES, displayLevels, matchEntry, type KnowledgeEntry } from './knowledge.js'
+import {
+  BUILTIN_ENTRIES,
+  comparisonLevels,
+  displayLevels,
+  matchEntry,
+  sameEffortMap,
+  type KnowledgeEntry,
+} from './knowledge.js'
 
 export const name = 'dsh-reasoning-effort'
 
@@ -277,12 +284,15 @@ export function apply(ctx: Context): void {
     const current = await currentLevels(provider, model)
     const expected = entry === undefined ? [] : displayLevels(entry)
     const { declared, entryLine, entry: userEntry } = userDeclaredModel(provider, model)
+    const comparisonExpected = entry === undefined ? [] : comparisonLevels(entry)
+    const declarationMatches = entry === undefined || !declared
+      || sameEffortMap(userEntry?.reasoningEfforts, entry.efforts)
     const path = await settingsPath()
 
     let reason: Guidance['reason'] = 'none'
     if (current.length === 0) {
       reason = 'missing'
-    } else if (entry !== undefined && !sameSet(current, expected)) {
+    } else if (entry !== undefined && (!sameSet(current, comparisonExpected) || !declarationMatches)) {
       reason = 'mismatch'
     }
 

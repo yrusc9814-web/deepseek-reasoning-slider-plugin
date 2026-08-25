@@ -48,3 +48,7 @@ export declare const BUILTIN_ENTRIES: readonly KnowledgeEntry[];
 export declare function matchEntry(entries: readonly KnowledgeEntry[], provider: string, model: string): KnowledgeEntry | undefined;
 /** Display levels (non-null) an entry offers, in declaration order. */
 export declare function displayLevels(entry: KnowledgeEntry): string[];
+/** All declared levels used for capability comparison, including `off: null`. */
+export declare function comparisonLevels(entry: KnowledgeEntry): string[];
+/** Whether a settings declaration preserves every knowledge-base wire mapping. */
+export declare function sameEffortMap(actual: unknown, expected: Readonly<Record<string, string | null>>): boolean;
