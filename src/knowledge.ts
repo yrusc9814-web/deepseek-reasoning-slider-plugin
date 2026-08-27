@@ -90,7 +90,8 @@ function patternRegExp(pattern: string): RegExp {
 
 /**
  * Find the most specific entry matching a provider/model pair.
- * Exact (non-wildcard) matches beat wildcard ones on each axis; user
+ * A provider-specific entry always beats a `provider: "*"` entry; model
+ * specificity breaks ties within the same provider class. User
  * entries are searched before built-in entries, so user overrides win.
  */
 export function matchEntry(
@@ -103,7 +104,7 @@ export function matchEntry(
   for (const entry of entries) {
     if (!patternRegExp(entry.provider).test(provider)) continue
     if (!patternRegExp(entry.model).test(model)) continue
-    const score = (entry.provider.includes('*') ? 0 : 1) + (entry.model.includes('*') ? 0 : 1)
+    const score = (entry.provider.includes('*') ? 0 : 2) + (entry.model.includes('*') ? 0 : 1)
     if (score > bestScore) {
       bestScore = score
       best = entry

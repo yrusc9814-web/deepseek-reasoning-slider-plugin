@@ -39,3 +39,12 @@ test('wire mapping errors remain detectable when level keys are unchanged', () =
   assert.equal(sameEffortMap({ low: 'low', high: 'high', max: 'max' }, expected), true)
   assert.equal(sameEffortMap({ low: 'high', high: 'high', max: 'max' }, expected), false)
 })
+
+test('provider-specific match outranks provider wildcard even with a broader model pattern', () => {
+  const wildcardProviderExactModel = { ...gpt56, id: 'wildcard-provider', model: 'gpt-5.6-sol' }
+  const exactProviderWildcardModel = { ...gpt56, id: 'exact-provider', provider: 'private', model: 'gpt-*' }
+  assert.equal(
+    matchEntry([wildcardProviderExactModel, exactProviderWildcardModel], 'private', 'gpt-5.6-sol'),
+    exactProviderWildcardModel,
+  )
+})

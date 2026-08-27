@@ -1,15 +1,21 @@
 /**
- * Host half: read-only reasoning-effort guidance.
+ * Host half: reasoning-effort guidance plus opt-out knowledge-base auto-apply.
  *
  * The slider can only offer what the DSH model directory exposes, and the
  * request path validates every submitted effort against that same directory
- * (`UNSUPPORTED_REASONING_EFFORT` otherwise). This half therefore never
- * invents levels and never writes configuration: it diagnoses custom-provider
+ * (`UNSUPPORTED_REASONING_EFFORT` otherwise). This half diagnoses custom-provider
  * models the directory under-describes and returns copy-ready
  * `reasoningEfforts` declarations (exact when the knowledge base knows the
  * model, a filled template otherwise) for the user to paste into
  * `settings.yaml`. Built-in catalog models are trusted as-is and never
  * flagged.
+ *
+ * Auto-apply (default on, `dsh-reasoning-effort.autoApply: false` to disable)
+ * fills only bare, hand-declared model entries that match the knowledge base.
+ * The write is one atomic mutation per pass, never replaces an explicit
+ * `reasoningEfforts`, and carries `compat` only onto `openai-completions`
+ * routes. Optimistic revisions and post-write verification prevent a stale or
+ * structurally incomplete edit from being retained.
  *
  * @module dsh-reasoning-effort
  */
@@ -46,14 +52,19 @@ const RPC_CHANNEL = '/dsh-reasoning-effort'
 
 const StoreSchema = z.object({
   entries: z.array(z.any()).default([]),
+  /** 知识库自动应用：裸模型条目匹配知识库时自动写入档位（false 关闭）。 */
+  autoApply: z.boolean().default(true),
 })
 
 interface StoreShape {
   entries?: KnowledgeEntry[]
+  autoApply?: boolean
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type JsonObject = Record<string, any>
+
+const REASONING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 
 interface HostSettingsService {
   readonly writable: boolean
@@ -61,6 +72,7 @@ interface HostSettingsService {
   register(ns: string, schema: unknown, options?: JsonObject): SettingsScopeLike
   describe(): Array<{ ns: string; revision: number; user?: unknown }>
   prepareDocument(): Promise<string | undefined>
+  mutate(ns: string, ops: JsonObject[], expectedRevision?: number): Promise<void>
 }
 
 interface SettingsScopeLike {
@@ -133,12 +145,23 @@ function isRecord(value: unknown): value is JsonObject {
 /** Accept only well-formed user entries so one typo cannot break matching. */
 function isUsableEntry(value: unknown): value is KnowledgeEntry {
   if (!isRecord(value)) return false
-  if (typeof value.id !== 'string' || typeof value.provider !== 'string' || typeof value.model !== 'string') return false
+  if (typeof value.id !== 'string' || value.id.length === 0) return false
+  if (typeof value.provider !== 'string' || value.provider.length === 0) return false
+  if (typeof value.model !== 'string' || value.model.length === 0) return false
   if (typeof value.note !== 'string' || !isRecord(value.efforts)) return false
-  for (const wire of Object.values(value.efforts)) {
-    if (wire !== null && typeof wire !== 'string') return false
+  const efforts = Object.entries(value.efforts)
+  if (efforts.length === 0) return false
+  let selectable = 0
+  for (const [level, wire] of efforts) {
+    if (!REASONING_LEVELS.has(level)) return false
+    if (level === 'off') {
+      if (wire !== null && (typeof wire !== 'string' || wire.length === 0)) return false
+    } else {
+      if (typeof wire !== 'string' || wire.length === 0) return false
+      selectable += 1
+    }
   }
-  return true
+  return selectable > 0
 }
 
 /** The full ordered knowledge base: user entries first, built-ins after. */
@@ -151,6 +174,138 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false
   const set = new Set(b)
   return a.every((level) => set.has(level))
+}
+
+interface AutoApplyRoute {
+  route: string
+  modelsBefore: unknown[]
+  modelsAfter: unknown[]
+}
+
+export interface AutoApplyPlan {
+  ops: JsonObject[]
+  rollbackOps: JsonObject[]
+  appliedTo: string[]
+  routes: AutoApplyRoute[]
+}
+
+/** JSON-shaped structural equality used for post-write and rollback checks. */
+function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b)
+      && a.length === b.length
+      && a.every((value, index) => sameJson(value, b[index]))
+  }
+  if (!isRecord(a) || !isRecord(b)) return false
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length
+    && keys.every((key) => Object.hasOwn(b, key) && sameJson(a[key], b[key]))
+}
+
+/**
+ * Build one minimal atomic mutation. A whole `models` array is the smallest
+ * safe settings path because DSH path mutations address object keys, not array
+ * indices; the copied array preserves entry order and every unrelated field.
+ */
+export function buildAutoApplyPlan(
+  userSection: unknown,
+  knowledge: readonly KnowledgeEntry[],
+): AutoApplyPlan | undefined {
+  if (!knowledge.every(isUsableEntry)) {
+    throw new TypeError('reasoning-effort knowledge contains an invalid entry or effort map')
+  }
+  if (userSection === undefined) return undefined
+  if (!isRecord(userSection) || !isRecord(userSection.providers)) {
+    throw new TypeError('llm-pi-ai user settings must contain a providers object')
+  }
+
+  const routes: AutoApplyRoute[] = []
+  const appliedTo: string[] = []
+  for (const [routeName, routeRaw] of Object.entries(userSection.providers as JsonObject)) {
+    if (!isRecord(routeRaw)) throw new TypeError(`llm-pi-ai provider ${JSON.stringify(routeName)} must be an object`)
+    if (routeRaw.models === undefined) continue
+    if (!Array.isArray(routeRaw.models)) {
+      throw new TypeError(`llm-pi-ai provider ${JSON.stringify(routeName)} models must be an array`)
+    }
+
+    let changed = false
+    const modelsAfter = routeRaw.models.map((entry) => {
+      if (!isRecord(entry) || typeof entry.id !== 'string' || entry.id.length === 0) return entry
+      // Presence, including an empty object, is an explicit user declaration.
+      if (entry.reasoningEfforts !== undefined) return entry
+      const known = matchEntry(knowledge, routeName, entry.id)
+      if (known === undefined) return entry
+
+      changed = true
+      appliedTo.push(`${routeName}/${entry.id}`)
+      const updated: JsonObject = { ...entry, reasoningEfforts: { ...known.efforts } }
+      if (routeRaw.api === 'openai-completions' && entry.compat === undefined && known.compat !== undefined) {
+        updated.compat = { ...known.compat }
+      }
+      return updated
+    })
+    if (changed) {
+      routes.push({ route: routeName, modelsBefore: routeRaw.models, modelsAfter })
+    }
+  }
+
+  if (routes.length === 0) return undefined
+  return {
+    ops: routes.map(({ route, modelsAfter }) => ({
+      op: 'set', path: ['providers', route, 'models'], value: modelsAfter,
+    })),
+    rollbackOps: routes.map(({ route, modelsBefore }) => ({
+      op: 'set', path: ['providers', route, 'models'], value: modelsBefore,
+    })),
+    appliedTo,
+    routes,
+  }
+}
+
+/** Verify exactly the arrays covered by a plan, without rejecting unrelated concurrent edits. */
+export function validateAutoApplyPlan(
+  userSection: unknown,
+  plan: AutoApplyPlan,
+  state: 'after' | 'before' = 'after',
+): boolean {
+  if (!isRecord(userSection) || !isRecord(userSection.providers)) return false
+  return plan.routes.every(({ route, modelsBefore, modelsAfter }) => {
+    const provider = (userSection.providers as JsonObject)[route]
+    return isRecord(provider) && sameJson(provider.models, state === 'after' ? modelsAfter : modelsBefore)
+  })
+}
+
+/** Execute one atomic, revision-guarded auto-apply pass. */
+export async function executeAutoApply(
+  settingsService: HostSettingsService,
+  storeShape: StoreShape,
+): Promise<string[]> {
+  if (storeShape.autoApply === false || !settingsService.writable) return []
+  if ((storeShape.entries ?? []).some((entry) => !isUsableEntry(entry))) {
+    throw new TypeError('reasoning-effort user knowledge contains an invalid entry or effort map')
+  }
+  const before = settingsService.describe().find((row) => row.ns === LLM_NS)
+  if (before === undefined) return []
+  const plan = buildAutoApplyPlan(before.user, knowledgeOf(storeShape))
+  if (plan === undefined) return []
+
+  await settingsService.mutate(LLM_NS, plan.ops, before.revision)
+  const after = settingsService.describe().find((row) => row.ns === LLM_NS)
+  if (after !== undefined && validateAutoApplyPlan(after.user, plan, 'after')) return plan.appliedTo
+
+  // Roll back only when the observed revision is exactly the one created by
+  // this pass. A missing descriptor or a later revision may include a user's
+  // concurrent edit and must never be overwritten by a best-effort rollback.
+  if (after === undefined || after.revision !== before.revision + 1) {
+    throw new Error('auto-apply post-write validation failed; rollback skipped because the revision is no longer safe')
+  }
+  await settingsService.mutate(LLM_NS, plan.rollbackOps, after.revision)
+  const rolledBack = settingsService.describe().find((row) => row.ns === LLM_NS)
+  if (rolledBack === undefined || !validateAutoApplyPlan(rolledBack.user, plan, 'before')) {
+    throw new Error('auto-apply post-write validation failed and rollback could not be verified')
+  }
+  throw new Error('auto-apply post-write validation failed; original model entries were restored')
 }
 
 /**
@@ -224,6 +379,46 @@ export function apply(ctx: Context): void {
   const settingsPath = (): Promise<string | undefined> => {
     settingsPathPromise ??= settingsService.prepareDocument().catch(() => undefined)
     return settingsPathPromise
+  }
+
+  // Fill matching bare entries after boot and after either relevant settings
+  // namespace changes. All writes are CAS-guarded and schema-validated by the
+  // settings service before persistence; a failed post-check restores the
+  // original model arrays with another CAS-guarded mutation.
+  let applying = false
+  let rerunRequested = false
+
+  const autoApplyOnce = async (): Promise<void> => {
+    if (applying) {
+      rerunRequested = true
+      return
+    }
+    applying = true
+    try {
+      const appliedTo = await executeAutoApply(settingsService, readStore())
+      if (appliedTo.length > 0) {
+        ctx.logger?.info?.(`dsh-reasoning-effort: 知识库档位已自动应用 → ${appliedTo.join(', ')}`)
+      }
+    } catch (error) {
+      // Validation failures and revision races do not produce partial writes.
+      // A later settings event reruns the converging, idempotent scan.
+      ctx.logger?.warn?.('dsh-reasoning-effort: auto-apply skipped:', error)
+    } finally {
+      applying = false
+      if (rerunRequested) {
+        rerunRequested = false
+        void autoApplyOnce()
+      }
+    }
+  }
+
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined
+  const scheduleAutoApply = (): void => {
+    if (debounceTimer !== undefined) clearTimeout(debounceTimer)
+    debounceTimer = setTimeout(() => {
+      debounceTimer = undefined
+      void autoApplyOnce()
+    }, 250)
   }
 
   /** Current directory levels for one model; [] when the model offers none. */
@@ -368,4 +563,17 @@ export function apply(ctx: Context): void {
       { authority: 'loopback' },
     )
   })
+
+  const onEvent = ctx.on as unknown as
+    (name: string, listener: (...args: unknown[]) => unknown) => () => boolean
+  const offDocumentUpdated = onEvent('settings/document-updated', (ns) => {
+    if (ns === LLM_NS || ns === STORE_NS) scheduleAutoApply()
+  })
+  ctx.effect(() => (function* (): Generator<() => void, void, void> {
+    yield () => {
+      if (debounceTimer !== undefined) clearTimeout(debounceTimer)
+      offDocumentUpdated()
+    }
+  })(), 'dsh-reasoning-effort:auto-apply')
+  scheduleAutoApply()
 }

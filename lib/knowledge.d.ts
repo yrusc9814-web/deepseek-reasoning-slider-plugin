@@ -42,7 +42,8 @@ export interface KnowledgeEntry {
 export declare const BUILTIN_ENTRIES: readonly KnowledgeEntry[];
 /**
  * Find the most specific entry matching a provider/model pair.
- * Exact (non-wildcard) matches beat wildcard ones on each axis; user
+ * A provider-specific entry always beats a `provider: "*"` entry; model
+ * specificity breaks ties within the same provider class. User
  * entries are searched before built-in entries, so user overrides win.
  */
 export declare function matchEntry(entries: readonly KnowledgeEntry[], provider: string, model: string): KnowledgeEntry | undefined;
